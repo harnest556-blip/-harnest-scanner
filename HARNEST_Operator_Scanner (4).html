@@ -102,6 +102,7 @@ function showErr(msg){
   const b=$('errBanner');
   b.innerHTML='<div style="font-weight:900;color:#f08080">⚠ '+esc(msg)+'</div><button style="margin-top:8px;height:34px;border:0;border-radius:6px;background:#24466e;color:#fff;font-weight:900;padding:0 14px" onclick="this.parentNode.classList.add(\'hide\')">DISMISS</button>';
   b.classList.remove('hide');
+  try{b.scrollIntoView({behavior:'smooth',block:'center'});}catch(e){window.scrollTo(0,0);}
   console.error(msg);
 }
 function clearErr(){$('errBanner').classList.add('hide');}
@@ -246,7 +247,7 @@ async function showBatch(id){
   const chemRows=chems.map(x=>'<div class="line"><span>'+esc(x.name||x.chemical||'')+'</span><b>'+esc(x.dose||x.value||'')+' '+esc(x.unit||'')+'</b></div>').join('');
   const auxRows=aux.map(x=>'<div class="line"><span>'+esc(x.name||x.auxiliary||'')+'</span><b>'+esc(x.dose||x.value||'')+' '+esc(x.unit||'g/L')+'</b></div>').join('');
   let action = next
-    ? '<button class="big-btn" onclick="advance('+JSON.stringify(b.batch)+')">'+esc(next.label)+'</button>'
+    ? '<button class="big-btn" id="advanceBtn" onclick="advance('+JSON.stringify(b.batch)+')">'+esc(next.label)+'</button>'
     : '<div class="done-msg">✓ DELIVERY COMPLETED</div>';
   card.innerHTML =
     '<div style="font-size:20px;font-weight:900">'+esc(b.batch)+'</div>'+
@@ -272,14 +273,17 @@ async function showBatch(id){
 
 window.advance=async function(id){
   clearErr();
+  const btn=$('advanceBtn');
+  const origLabel=btn?btn.textContent:'';
+  if(btn){btn.disabled=true;btn.style.opacity='0.6';btn.textContent='UPDATING…';}
   try{
-    if(!cloudUser){showErr('Your login session expired. Please login again.');await doLogout();return}
+    if(!cloudUser){await doLogout();throw new Error('Your login session expired. Please login again.')}
     await refreshLive();
     const d=liveDB;
     const b=(d.batches||[]).find(x=>x.batch===id);
-    if(!b){showErr('Batch not found');return}
+    if(!b){throw new Error('Batch not found')}
     const stage=nextStageFor(b,d);
-    if(!stage){showErr('This batch is already delivered.');return}
+    if(!stage){throw new Error('This batch is already delivered.')}
     const who=cloudUser.email||'QR Scan Operator';
     const machine=b.machine||''; const t=nowLocalInput(); let p=batchProd(d,id);
     if(stage.key==='start'){
@@ -305,6 +309,7 @@ window.advance=async function(id){
     await showBatch(id);
   }catch(e){
     showErr('Could not update the batch: '+(e?.message||e)+' (code: '+(e?.code||'—')+', details: '+(e?.details||'—')+')');
+    if(btn){btn.disabled=false;btn.style.opacity='1';btn.textContent=origLabel;}
   }
 };
 
