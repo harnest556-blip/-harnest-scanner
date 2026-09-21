@@ -1,0 +1,147 @@
+<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1">
+<title>HARNEST — Batch Details</title>
+<style>
+:root{--navy:#183e63;--navy2:#214d79;--head:#e8eef4;--gold:#d8bc69;--ink:#182536;--bg:#0e2038}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);font-family:Arial,Helvetica,sans-serif;color:#eef2f6;min-height:100vh}
+.appbar{background:var(--navy);color:#fff;padding:14px 16px;display:flex;align-items:center;justify-content:space-between;position:sticky;top:0;z-index:20;border-bottom:2px solid var(--gold)}
+.appbar b{font-size:17px}
+.gear{background:none;border:0;color:#cfe0f0;font-size:20px;cursor:pointer;padding:4px 8px}
+.wrap{max-width:520px;margin:0 auto;padding:16px}
+.card{background:#132a46;border:1px solid #24466e;border-radius:10px;padding:16px;margin-bottom:14px}
+.muted{color:#9fb3c8;font-size:13px}
+.detail-grid{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:12px}
+.detail-grid div{background:#0e2038;border:1px solid #24466e;border-radius:8px;padding:8px 10px}
+.detail-grid label{display:block;font-size:10px;color:#9fb3c8;font-weight:800;text-transform:uppercase}
+.detail-grid b{font-size:15px}
+.section-title{color:var(--gold);font-weight:900;font-size:12px;letter-spacing:.4px;margin:14px 0 6px;text-transform:uppercase}
+.line{display:flex;justify-content:space-between;padding:5px 0;border-bottom:1px solid #24466e;font-size:14px}
+.status-pill{display:inline-block;padding:4px 10px;border-radius:20px;font-size:11px;font-weight:900;margin-top:6px}
+.pill-plan{background:#3a3410;color:#e8d585}
+.pill-run{background:#123a5e;color:#8fc4ff}
+.pill-done{background:#0f3a24;color:#7be0a8}
+.err-box{background:#3a1414;border:1px solid #c53030;border-radius:10px;padding:16px;color:#f08080;font-weight:800}
+.settings-panel{position:fixed;inset:0;background:#000c;display:flex;align-items:center;justify-content:center;z-index:50}
+.settings-panel.hide{display:none}
+label.set{display:block;font-size:12px;font-weight:900;color:#9fb3c8;margin:10px 0 4px}
+input{width:100%;height:40px;border-radius:6px;border:1px solid #24466e;background:#0e2038;color:#fff;padding:0 10px}
+.btn{width:100%;height:44px;border:0;border-radius:8px;background:var(--navy2);color:#fff;font-weight:900;margin-top:12px;cursor:pointer}
+.note{font-size:12px;color:#9fb3c8;margin-top:10px}
+</style>
+</head>
+<body>
+<div class="appbar"><b>HARNEST — Batch Details</b><button class="gear" onclick="openSettings()">⚙</button></div>
+<div class="wrap">
+  <div id="content" class="card">Loading…</div>
+</div>
+
+<div class="settings-panel hide" id="settingsPanel">
+  <div class="card" style="width:90%;max-width:400px">
+    <div style="font-weight:900;margin-bottom:6px">Cloud Connection</div>
+    <div class="muted">Paste the same Supabase Project URL and Anon Public Key shown in the main HARNEST app's CLOUD SETTINGS. Saved on this phone only. This page is read-only — no login needed.</div>
+    <label class="set">Supabase Project URL</label>
+    <input id="setUrl" placeholder="https://your-project.supabase.co">
+    <label class="set">Supabase Anon Public Key</label>
+    <input id="setKey" placeholder="sb_publishable_...">
+    <button class="btn" onclick="saveSettings()">CONNECT</button>
+    <div class="note" id="setErr"></div>
+  </div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script>
+(function(){
+const $=id=>document.getElementById(id);
+function esc(s){return String(s??'').replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]));}
+function db0(){return {batches:[],production:[],qc:[],history:[],stock:{}};}
+function batchProd(d,id){return (d.production||[]).find(x=>x.batch===id)||null;}
+function stageStatusFor(b,d){
+  if(!b)return 'Planned';
+  if(b.deliveryCompletedAt)return 'Delivery';
+  if(b.hydroCompletedAt)return 'Hydro-Dryer Complete';
+  const p=batchProd(d,b.batch);
+  if(p&&p.end)return (String(b.batchType||p.batchType||'WFT').toUpperCase()==='RFT'?'Dyeing Complete RFT':'Dyeing Complete WFT');
+  if(p&&p.start)return 'Dyeing Running';
+  return b.status||'Planned';
+}
+function displayLotNo(b,list){
+  if(b.lotNo!==undefined && b.lotNo!==null && String(b.lotNo).trim()!=='') return 'LOT '+String(b.lotNo).replace(/^LOT\s*/i,'');
+  const machine=String(b.machine||'').trim().toLowerCase();
+  if(!machine) return 'LOT 1';
+  const arr=(list||[]).filter(x=>String(x.machine||'').trim().toLowerCase()===machine);
+  arr.sort((a,c)=>String(a.planDate||a.updated||'').localeCompare(String(c.planDate||c.updated||'')) || String(a.batch||'').localeCompare(String(c.batch||'')));
+  const idx=arr.findIndex(x=>String(x.batch||'')===String(b.batch||''));
+  return 'LOT '+(idx>=0?idx+1:arr.length+1);
+}
+function pillClass(st){
+  if(st==='Planned')return 'pill-plan';
+  if(st==='Dyeing Running')return 'pill-run';
+  return 'pill-done';
+}
+
+function getSaved(){try{return {url:localStorage.getItem('HARNEST_OP_SUPABASE_URL')||'',key:localStorage.getItem('HARNEST_OP_SUPABASE_ANON')||''}}catch(e){return {url:'',key:''}}}
+window.openSettings=function(){const c=getSaved();$('setUrl').value=c.url;$('setKey').value=c.key;$('setErr').textContent='';$('settingsPanel').classList.remove('hide')};
+window.saveSettings=async function(){
+  const url=$('setUrl').value.trim(), key=$('setKey').value.trim();
+  if(!url||!key){$('setErr').textContent='Both fields are required.';return}
+  try{localStorage.setItem('HARNEST_OP_SUPABASE_URL',url);localStorage.setItem('HARNEST_OP_SUPABASE_ANON',key);}catch(e){}
+  $('settingsPanel').classList.add('hide');
+  await load();
+};
+
+function getBatchIdFromUrl(){
+  const u=new URL(location.href);
+  return (u.searchParams.get('batch')||'').trim();
+}
+
+async function load(){
+  const content=$('content');
+  const id=getBatchIdFromUrl();
+  if(!id){content.innerHTML='<div class="err-box">No batch ID in the link.</div>';return}
+  const c=getSaved();
+  if(!c.url||!c.key){content.innerHTML='<div class="err-box">Cloud not set up on this phone yet. Tap ⚙ above to connect once.</div>';openSettings();return}
+  content.innerHTML='Loading…';
+  try{
+    const client=supabase.createClient(c.url,c.key);
+    const {data,error}=await client.from('erp_state').select('data').eq('id',1).maybeSingle();
+    if(error)throw error;
+    const d=Object.assign(db0(),data?.data||{});
+    const b=(d.batches||[]).find(x=>String(x.batch).toLowerCase()===id.toLowerCase());
+    if(!b){content.innerHTML='<div class="err-box">Batch '+esc(id)+' was not found.</div>';return}
+    const st=stageStatusFor(b,d);
+    const dy=b.recipeSnapshot||b.dyeline||b.recipeData||b.recipeDetails||{};
+    const dyes=Array.isArray(dy.dyes)?dy.dyes:(Array.isArray(b.dyes)?b.dyes:[]);
+    const chems=Array.isArray(dy.chemicals)?dy.chemicals:(Array.isArray(b.chemicals)?b.chemicals:[]);
+    const aux=Array.isArray(dy.aux)?dy.aux:(Array.isArray(dy.auxiliaries)?dy.auxiliaries:(Array.isArray(b.auxiliaries)?b.auxiliaries:[]));
+    const dyeRows=dyes.map(x=>'<div class="line"><span>'+esc(x.name||x.dye||x.code||'')+'</span><b>'+esc(x.pct||x.percent||'')+'%</b></div>').join('');
+    const chemRows=chems.map(x=>'<div class="line"><span>'+esc(x.name||x.chemical||'')+'</span><b>'+esc(x.dose||x.value||'')+' '+esc(x.unit||'')+'</b></div>').join('');
+    const auxRows=aux.map(x=>'<div class="line"><span>'+esc(x.name||x.auxiliary||'')+'</span><b>'+esc(x.dose||x.value||'')+' '+esc(x.unit||'g/L')+'</b></div>').join('');
+    content.innerHTML =
+      '<div style="font-size:20px;font-weight:900">'+esc(b.batch)+'</div>'+
+      '<span class="status-pill '+pillClass(st)+'">'+esc(st)+'</span>'+
+      '<div class="muted" style="margin-top:6px">'+esc(b.color||b.shade||'')+' | REF '+esc(b.ref||'')+'</div>'+
+      '<div class="detail-grid">'+
+        '<div><label>Recipe</label><b>'+esc(b.recipe||dy.code||'')+'</b></div>'+
+        '<div><label>Buyer</label><b>'+esc(b.buyer||'')+'</b></div>'+
+        '<div><label>Machine / Lot</label><b>'+esc(b.machine||'')+' — '+esc(displayLotNo(b,d.batches||[]))+'</b></div>'+
+        '<div><label>Type</label><b>'+esc(b.batchType||'WFT')+'</b></div>'+
+        '<div><label>Batch Weight</label><b>'+esc(Number(b.weight||0).toFixed(3))+' KG</b></div>'+
+        '<div><label>Yarn / Count</label><b>'+esc(b.yarn||b.yarnCount||'')+'</b></div>'+
+        '<div><label>Liquor Ratio</label><b>1:'+esc(b.liquorRatio||dy.liquorRatio||'')+'</b></div>'+
+        '<div><label>Water</label><b>'+esc(Number(b.water||dy.water||0).toFixed(3))+' L</b></div>'+
+        '<div><label>Temp / Time</label><b>'+esc(b.temp||dy.temp||'')+'°C / '+esc(b.time||dy.time||'')+'</b></div>'+
+        '<div><label>pH</label><b>'+esc(b.ph||dy.ph||'')+'</b></div>'+
+      '</div>'+
+      (dyeRows?'<div class="section-title">Dyestuff</div>'+dyeRows:'')+
+      (chemRows?'<div class="section-title">Chemicals</div>'+chemRows:'')+
+      (auxRows?'<div class="section-title">Auxiliaries</div>'+auxRows:'')+
+      '<div class="note">This is a read-only view. To change status, use the HARNEST Operator Scanner app.</div>';
+  }catch(e){
+    content.innerHTML='<div class="err-box">Could not load batch: '+esc(e?.message||e)+'</div>';
+  }
+}
+
+load();
+})();
+</script>
+</body></html>
